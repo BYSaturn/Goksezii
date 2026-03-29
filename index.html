@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Uzay Limanı Simülatörü - V2.1</title>
+    
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/globe.gl@2.31.0/dist/globe.gl.min.js"></script>
+    
+    <link rel="stylesheet" href="style_v3.css">
+</head>
+<body>
+    <div id="globeViz"></div>
+
+    <!-- Algorithm Explanation Tooltip -->
+    <div id="algoTooltip" class="glass-panel tooltip-box hidden">
+        <h3><i class="ri-information-line"></i> Algoritma Kriterleri</h3>
+        <ul class="algo-list">
+            <li><i class="ri-windy-line"></i> Yüzey Rüzgarı > 40 km/s: <span class="penalty">-40 Puan</span></li>
+            <li><i class="ri-cloud-windy-line"></i> İrtifa (180m) > 65 km/s: <span class="penalty">-30 Puan</span></li>
+            <li><i class="ri-eye-off-line"></i> Görüş Mesafesi < 3km: <span class="penalty">-30 Puan</span></li>
+            <li><i class="ri-heavy-showers-line"></i> Nem / Yağış: <span class="penalty">-20 Puan</span></li>
+            <li><i class="ri-truck-line"></i> Lojistik & Montaj Eksiği: <span class="penalty">-15 Puan</span></li>
+        </ul>
+        <p class="algo-desc">Skor = 100 üzerinden başlar. Kesintiler düşüldükten sonra 85 üstü fırlatmaya izin verir (GO), 60-85 arası bekletir (HOLD), 60 altı fırlatmayı iptal eder (NO-GO).</p>
+    </div>
+
+    <!-- 3D Marker Click Modal -->
+    <div id="regionModal" class="modal-overlay hidden">
+        <div class="glass-panel modal-box">
+            <button class="close-btn" id="closeModal"><i class="ri-close-line"></i></button>
+            <h2 id="modalTitle">Tesis Adı</h2>
+            <p id="modalCoords" class="coords">0.00°N, 0.00°E</p>
+            <p id="modalDesc" class="desc">Tesis açıklaması...</p>
+            
+            <div class="live-cam-container">
+                <div class="live-indicator"><span class="pulse-dot"></span> ONLINE SAHA KAMERASI (SİMÜLASYON)</div>
+                <iframe id="modalIframe" src="" width="100%" height="400" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+            </div>
+            
+            <div id="modalLaunchConditions" style="margin-top:15px; display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
+                <!-- Anlık Olarak Gözlemsel Verilerle Doldurulacak -->
+            </div>
+            
+            <div class="modal-footer">
+                <button class="action-btn" id="selectRegionBtn">Bu Hedefi Merkez Seç</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Terminal Overlay -->
+    <div id="terminalOverlay" class="terminal-overlay hidden">
+        <div class="terminal-header">
+            <span><i class="ri-terminal-box-line"></i> ALGORİTMA VERİ AKIŞI (CANLI)</span>
+            <span style="font-size: 0.7rem; color: var(--text-secondary);">v3.0 CORTEX</span>
+        </div>
+        <div id="terminalStream" class="terminal-stream"></div>
+    </div>
+
+    <div class="dashboard-overlay">
+        <!-- Header -->
+        <header class="glass-panel main-header">
+            <div>
+                <h1>UZAY LİMANI SİMÜLASYON MERKEZİ</h1>
+                <p>TUA Astro Hackathon Akıllı Karar Destek Sistemi</p>
+            </div>
+            <div class="status-indicator">
+                <span class="pulse-dot"></span>
+                <span id="systemStatus">API Veri Akışı: Bekleniyor...</span>
+            </div>
+        </header>
+
+        <!-- Weather Panel (Left) -->
+        <aside class="glass-panel panel-left">
+            <h2 class="panel-title">
+                <span><i class="ri-radar-line"></i> Meteorolojik Veritabanı</span>
+                <span class="live-badge">CANLI API</span>
+            </h2>
+            
+            <div class="location-selector">
+                <select id="spaceportSelect">
+                    <option disabled selected>Lokal API Verileri Yükleniyor...</option>
+                </select>
+                <div class="coord-display">
+                    Son Güncelleme: <span id="lastSyncTime" style="color:var(--accent-color)">--:--:--</span> | 
+                    <span id="coordDisplay">Bekleniyor...</span>
+                </div>
+            </div>
+
+            <div class="data-grid" id="weatherGrid">
+                <div class="data-card loading">Canlı veriler Open-Meteo'dan çekiliyor...</div>
+            </div>
+
+            <div class="atmospheric-layers">
+                <h3>Rüzgar Profili (Yükseklik)</h3>
+                <div class="wind-bars" id="windBars"></div>
+            </div>
+        </aside>
+
+        <!-- Logistics & Algorithm Panel (Right) -->
+        <aside class="glass-panel panel-right">
+            <h2 class="panel-title" style="margin-bottom: 0.5rem;"><i class="ri-rocket-2-line"></i> Uzay Lojistiği & Operasyon</h2>
+            
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                <button id="toggleLogisticsBtn" class="action-btn toggle-arcs-btn" style="flex:1; margin-bottom:0;"><i class="ri-flow-chart"></i> Lojistik: AÇIK</button>
+                <button id="toggleEquatorBtn" class="action-btn toggle-arcs-btn" style="flex:1; margin-bottom:0;"><i class="ri-arrow-left-right-line"></i> Ekvator: AÇIK</button>
+            </div>
+            
+            <button id="toggleTerminalBtn" class="action-btn toggle-arcs-btn" style="margin-top:0.5rem; margin-bottom: 0; border-color: var(--danger-color); color: var(--text-secondary);"><i class="ri-terminal-window-line"></i> Algoritma Terminali: KAPALI</button>
+
+            <div class="panel-title mt-4"><span><i class="ri-rocket-2-line"></i> Fırlatma Aracı & Lojistik</span></div>
+            <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 1rem; line-height: 1.4;">
+                <strong style="color:var(--accent-color)">Neden Gerekli?</strong> Fırlatma karar algoritması, meteorolojinin yanı sıra fırlatma aracının <strong>montajına, yakıt dolumuna ve fırlatma rampasına (GSE) geliş durumuna</strong> da doğrudan bağımlıdır. Hava durumu mükemmel olsa bile lojistik hazır değilse fırlatma gerçekleşmez.
+            </p>
+
+            <div class="logistics-container">
+                <div class="logistics-item">
+                    <div class="log-header">
+                        <span>Fırlatma Aracı (Montaj)</span>
+                        <span id="veh-status">85% - Hazırlanıyor</span>
+                    </div>
+                    <div class="progress-bar"><div class="fill veh-fill" style="width: 85%"></div></div>
+                </div>
+                <div class="logistics-item">
+                    <div class="log-header">
+                        <span>Kriyojenik Yakıt (Seviye)</span>
+                        <span id="fuel-status">62% - Kritik</span>
+                    </div>
+                    <div class="progress-bar"><div class="fill fuel-fill" style="width: 62%; background: var(--warning-color)"></div></div>
+                </div>
+                <div class="logistics-item">
+                    <div class="log-header">
+                        <span>Yer Destek (GSE)</span>
+                        <span id="gse-status">100% - Tesiste</span>
+                    </div>
+                    <div class="progress-bar"><div class="fill" style="width: 100%; background: var(--success-color)"></div></div>
+                </div>
+                <div class="logistics-item">
+                    <div class="log-header">
+                        <span>Görev Yükü (Uydu)</span>
+                        <span id="payload-status">Entegre Ediliyor</span>
+                    </div>
+                    <div class="progress-bar"><div class="fill animation-pulse" style="width: 40%; background: var(--accent-color)"></div></div>
+                </div>
+            </div>
+
+            <h2 class="panel-title" style="margin-top: 2rem; position:relative;">
+                <i class="ri-cpu-line"></i> Süreç Karar Algoritması
+                <i class="ri-information-line info-icon" id="algoInfoBtn" title="Algoritma Detayları"></i>
+            </h2>
+            <div class="decision-box">
+                <div class="score-circle">
+                    <svg viewBox="0 0 36 36" class="circular-chart">
+                      <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                      <path class="circle" id="scoreCircle" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                      <text x="18" y="20.5" class="percentage" id="scoreValue">--%</text>
+                    </svg>
+                </div>
+                <div class="decision-status">
+                    <h3 id="decisionText">HESAPLANIYOR</h3>
+                    <p id="decisionReason">API ve Lojistik Matrisleri işleniyor...</p>
+                </div>
+            </div>
+            
+            <button class="action-btn" id="recalcBtn"><i class="ri-refresh-line"></i> Akışı Yenile & Simüle Et</button>
+        </aside>
+    </div>
+
+    <script src="script_v3.js"></script>
+</body>
+</html>
